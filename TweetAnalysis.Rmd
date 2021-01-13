@@ -1,0 +1,462 @@
+---
+title: "Final Project - Uber vs. Lyft - Twitter Search Using R with histogram of emotions and word cloud"
+author: "Shih-Yuan Wang"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message = FALSE, warning = FALSE}
+# Load libraries 
+library(base64enc) 
+library(tm) 
+library(syuzhet)  # for sentiment analysis 
+library(ggmap) 
+library(rtweet) 
+library(tidyverse)
+library(ggplot2)
+library(plotly)
+library(wordcloud)
+
+rm(list=ls())
+setwd("C:/Users/User/Desktop/BUS 760 - Data Technology for BA/Project")
+```
+
+```{r}
+## access token method: create token and save it as an environment variable
+
+twitter_tokens <- create_token(
+  app = "Twitter Analytics - Shih-Yuan Wang",
+  consumer_key = '',
+  consumer_secret = '',   
+  access_token = '',
+  access_secret = ''
+)
+
+```
+
+# Uber
+
+```{r}
+# get Uber tweets
+tweets <- search_tweets("Uber", n = 100000, include_rts = FALSE, retryonratelimit=FALSE, lang="en", tweet_mode="extended")
+
+# Clean tweets
+
+# remove retweet entities
+cleaned_text = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", tweets$text)
+# remove at people
+cleaned_text = gsub("\\@", "", cleaned_text)
+# remove punctuation
+cleaned_text = gsub("[[:punct:]]", "", cleaned_text)
+# remove numbers
+cleaned_text = gsub("[[:digit:]]", "", cleaned_text)
+# remove html links
+cleaned_text = gsub("https*?[:space:]", "", cleaned_text)
+# remove unnecessary spaces
+cleaned_text = gsub("[ \t]{2,}", "", cleaned_text)
+# remove something
+cleaned_text = gsub("^\\s+|\\s+$", "", cleaned_text)
+# remove emojis or special characters
+cleaned_text = gsub("<.*>", "", enc2native(cleaned_text))
+cleaned_text = gsub("[^\x01-\x7F]", "", cleaned_text)
+
+cleaned_tweets = tweets
+cleaned_tweets$text = tolower(cleaned_text)
+
+
+emotions = get_nrc_sentiment(cleaned_tweets$text)
+sentiment = get_sentiment(cleaned_tweets$text)
+
+cleaned_tweets <- cbind(cleaned_tweets, emotions)
+cleaned_tweets$sentiment = sentiment
+write_as_csv(cleaned_tweets, 'R_UberTweet.csv')
+```
+
+```{r}
+### For future rerun
+
+# Read in the R_UberTweet.csv
+
+cleaned_tweets <- read.csv("R_UberTweet.csv")
+dim(cleaned_tweets)
+```
+
+
+```{r}
+# Plot emotion histogram with the latest tweets
+
+emo_bar = colSums(cleaned_tweets[,91:98])
+emo_sum = data.frame(count=emo_bar, emotion=names(emo_bar))
+emo_sum$emotion = factor(emo_sum$emotion, levels=emo_sum$emotion[order(emo_sum$count, decreasing = TRUE)])
+
+plot_ly(emo_sum, x=~emotion, y=~count, type="bar", texttemplate = '%{y:.3s}', 
+        textposition = 'outside', color=~emotion) %>%
+        layout(xaxis=list(title=""), showlegend=FALSE,
+         title="Uber Tweets - Distribution of Emotion Categories")
+```
+
+## emotion word cloud
+
+```{r}
+# emotion analysis: anger, anticipation, disgust, fear, joy, sadness, surprise, trust
+
+# put everything in a single vector
+emotionwords = c(
+  paste(cleaned_tweets$text[cleaned_tweets$anger > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$anticipation > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$disgust > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$fear > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$joy > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$sadness > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$surprise > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$trust > 0], collapse=" ")
+)
+
+# remove stop-words
+emotionwords = removeNumbers(emotionwords)
+emotionwords = removeWords(emotionwords, stopwords("english"))
+
+# create corpus
+corpus = Corpus(VectorSource(emotionwords))
+
+# create term-document matrix
+tdm = TermDocumentMatrix(corpus)
+
+# convert as matrix
+tdm = as.matrix(tdm)
+
+# add column names
+colnames(tdm) = c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust')
+
+# Plot emotion word cloud
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 20))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.25, 'Uber Tweets - Emotion Comparison Word Cloud', cex=1.2)
+comparison.cloud(tdm, random.order=FALSE,
+                 colors = c("#00B2FF", "red", "#FF0099", "#6600CC", "green", "orange", "blue", "brown"),
+                 title.size=1.5, max.words=2000)
+```
+
+## positive word cloud
+
+```{r}
+senti = levels(factor(cleaned_tweets$positive))
+
+nsenti = length(senti)
+senti.docs = rep("",nsenti)
+for (i in 1: nsenti)
+{
+  tmp = cleaned_tweets$text[cleaned_tweets$positive == senti[i]]  
+  senti.docs[i] = paste(tmp, collapse=" ")
+}
+
+# remove stopwords
+senti.docs <- removeNumbers(senti.docs)
+senti.docs <- removeWords(senti.docs, stopwords("english"))
+
+# # create corpus
+# corpus = Corpus(VectorSource(senti.docs))
+# tdm = TermDocumentMatrix(corpus)
+# tdm = as.matrix(tdm)
+# tdm1 <- tdm[nchar(rownames(tdm)) < 11,]
+# colnames(tdm1) = senti
+# 
+# #Finally, we plot the word cloud with words categorized by emotions
+# comparison.cloud(tdm1, scale=c(4,.4), random.order = FALSE, title.size = 2)
+# 
+# # ---------------------------------------------------------------
+# 
+# #create this for using wordcloud with tableau
+# SEN <- as.data.frame(tdm1) 
+# write.csv(SEN, file = 'sentiment_corpus_pos.csv')
+
+#generate positive word cloud alternate
+
+corpus = Corpus(VectorSource(senti.docs))
+corpus <- tm_map(corpus, function(x)removeWords(x,stopwords()))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 20))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.3, 'Uber Tweets - Positive Word Cloud')
+wordcloud(corpus,colors=brewer.pal(5, "Dark2"),random.color = TRUE,max.words = 200)
+
+```
+
+## negative word cloud
+
+```{r}
+senti = levels(factor(cleaned_tweets$negative))   # switch to here for negative
+
+nsenti = length(senti)
+senti.docs = rep("",nsenti)
+for (i in 1: nsenti)
+{
+  tmp = cleaned_tweets$text[cleaned_tweets$negative == senti[i]]    # same here
+  senti.docs[i] = paste(tmp, collapse=" ")
+}
+
+# remove stopwords
+senti.docs <- removeNumbers(senti.docs)
+senti.docs <- removeWords(senti.docs, stopwords("english"))
+
+# create corpus
+# corpus = Corpus(VectorSource(senti.docs))
+# tdm = TermDocumentMatrix(corpus)
+# tdm = as.matrix(tdm)
+# tdm1 <- tdm[nchar(rownames(tdm)) < 11,]
+# colnames(tdm1) = senti
+# 
+# #Finally, we plot the word cloud with words categorized by emotions
+# comparison.cloud(tdm1, scale=c(4,.4), random.order = FALSE, title.size = 2)
+# 
+# # ---------------------------------------------------------------
+# 
+# #create this for using wordcloud with tableau
+# SEN <- as.data.frame(tdm1) 
+# write.csv(SEN, file = 'sentiment_corpus_neg.csv')
+
+#generate negative word cloud alternate
+corpus = Corpus(VectorSource(senti.docs))
+corpus <- tm_map(corpus, function(x)removeWords(x,stopwords()))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 20))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.3, 'Uber Tweets - Negative Word Cloud')
+wordcloud(corpus,colors=brewer.pal(5, "Dark2"),random.color = TRUE,max.words = 200)
+
+```
+
+## all word cloud
+
+```{r}
+# For all words
+corpus = Corpus(VectorSource(cleaned_tweets$text))
+corpus <- tm_map(corpus, function(x)removeWords(x,stopwords()))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 15))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.3, 'Uber Tweets - Word Cloud')
+wordcloud(corpus,colors=brewer.pal(5, "Dark2"),random.color = TRUE,max.words = 200)
+
+```
+
+# Lyft
+
+```{r}
+# get Lyft tweets
+tweets <- search_tweets("Lyft", n = 100000, include_rts = FALSE, retryonratelimit=FALSE, lang="en", tweet_mode="extended")
+
+# Clean tweets
+
+# remove retweet entities
+cleaned_text = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", tweets$text)
+# remove at people
+cleaned_text = gsub("\\@", "", cleaned_text)
+# remove punctuation
+cleaned_text = gsub("[[:punct:]]", "", cleaned_text)
+# remove numbers
+cleaned_text = gsub("[[:digit:]]", "", cleaned_text)
+# remove html links
+cleaned_text = gsub("https*?[:space:]", "", cleaned_text)
+# remove unnecessary spaces
+cleaned_text = gsub("[ \t]{2,}", "", cleaned_text)
+# remove something
+cleaned_text = gsub("^\\s+|\\s+$", "", cleaned_text)
+# remove emojis or special characters
+cleaned_text = gsub("<.*>", "", enc2native(cleaned_text))
+cleaned_text = gsub("[^\x01-\x7F]", "", cleaned_text)
+
+cleaned_tweets = tweets
+cleaned_tweets$text = tolower(cleaned_text)
+
+
+emotions = get_nrc_sentiment(cleaned_tweets$text)
+sentiment = get_sentiment(cleaned_tweets$text)
+
+cleaned_tweets <- cbind(cleaned_tweets, emotions)
+cleaned_tweets$sentiment = sentiment
+write_as_csv(cleaned_tweets, 'R_LyftTweet.csv')
+```
+
+```{r}
+### For future rerun
+
+# Read in the R_UberTweet.csv
+
+cleaned_tweets <- read.csv("R_LyftTweet.csv")
+dim(cleaned_tweets)
+```
+
+
+```{r}
+# Plot histogram with the latest tweets
+
+emo_bar = colSums(cleaned_tweets[,91:98])
+emo_sum = data.frame(count=emo_bar, emotion=names(emo_bar))
+emo_sum$emotion = factor(emo_sum$emotion, levels=emo_sum$emotion[order(emo_sum$count, decreasing = TRUE)])
+
+plot_ly(emo_sum, x=~emotion, y=~count, type="bar", texttemplate = '%{y:.2s}', 
+        textposition = 'outside', color=~emotion) %>%
+        layout(xaxis=list(title=""), showlegend=FALSE,
+         title="Lyft Tweets - Distribution of Emotion Categories")
+```
+
+## emotion word cloud
+
+```{r}
+# emotion analysis: anger, anticipation, disgust, fear, joy, sadness, surprise, trust
+
+# put everything in a single vector
+emotionwords = c(
+  paste(cleaned_tweets$text[cleaned_tweets$anger > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$anticipation > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$disgust > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$fear > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$joy > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$sadness > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$surprise > 0], collapse=" "),
+  paste(cleaned_tweets$text[cleaned_tweets$trust > 0], collapse=" ")
+)
+
+# remove stop-words
+emotionwords = removeNumbers(emotionwords)
+emotionwords = removeWords(emotionwords, stopwords("english"))
+
+# create corpus
+corpus = Corpus(VectorSource(emotionwords))
+
+# create term-document matrix
+tdm = TermDocumentMatrix(corpus)
+
+# convert as matrix
+tdm = as.matrix(tdm)
+
+# add column names
+colnames(tdm) = c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust')
+
+# Plot emotion word cloud
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 20))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.35, 'Lyft Tweets - Emotion Comparison Word Cloud', cex=1.2)
+comparison.cloud(tdm, random.order=FALSE,
+                 colors = c("#00B2FF", "red", "#FF0099", "#6600CC", "green", "orange", "blue", "brown"),
+                 title.size=1.5, max.words=2000)
+```
+
+## positive word cloud
+
+```{r}
+senti = levels(factor(cleaned_tweets$positive))
+
+nsenti = length(senti)
+senti.docs = rep("",nsenti)
+for (i in 1: nsenti)
+{
+  tmp = cleaned_tweets$text[cleaned_tweets$positive == senti[i]]  
+  senti.docs[i] = paste(tmp, collapse=" ")
+}
+
+# remove stopwords
+senti.docs <- removeNumbers(senti.docs)
+senti.docs <- removeWords(senti.docs, stopwords("english"))
+
+# # create corpus
+# corpus = Corpus(VectorSource(senti.docs))
+# tdm = TermDocumentMatrix(corpus)
+# tdm = as.matrix(tdm)
+# tdm1 <- tdm[nchar(rownames(tdm)) < 11,]
+# colnames(tdm1) = senti
+# 
+# #Finally, we plot the word cloud with words categorized by emotions
+# comparison.cloud(tdm1, scale=c(4,.4), random.order = FALSE, title.size = 2)
+# 
+# # ---------------------------------------------------------------
+# 
+# #create this for using wordcloud with tableau
+# SEN <- as.data.frame(tdm1) 
+# write.csv(SEN, file = 'sentiment_corpus_pos.csv')
+
+#generate positive word cloud alternate
+
+corpus = Corpus(VectorSource(senti.docs))
+corpus <- tm_map(corpus, function(x)removeWords(x,stopwords()))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 15))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.3, 'Lyft Tweets - Positive Word Cloud')
+wordcloud(corpus,colors=brewer.pal(5, "Dark2"),random.color = TRUE,max.words = 200)
+
+```
+
+## negative word cloud
+
+```{r}
+senti = levels(factor(cleaned_tweets$negative))   # switch to here for negative
+
+nsenti = length(senti)
+senti.docs = rep("",nsenti)
+for (i in 1: nsenti)
+{
+  tmp = cleaned_tweets$text[cleaned_tweets$negative == senti[i]]    # same here
+  senti.docs[i] = paste(tmp, collapse=" ")
+}
+
+# remove stopwords
+senti.docs <- removeNumbers(senti.docs)
+senti.docs <- removeWords(senti.docs, stopwords("english"))
+
+# create corpus
+# corpus = Corpus(VectorSource(senti.docs))
+# tdm = TermDocumentMatrix(corpus)
+# tdm = as.matrix(tdm)
+# tdm1 <- tdm[nchar(rownames(tdm)) < 11,]
+# colnames(tdm1) = senti
+# 
+# #Finally, we plot the word cloud with words categorized by emotions
+# comparison.cloud(tdm1, scale=c(4,.4), random.order = FALSE, title.size = 2)
+# 
+# # ---------------------------------------------------------------
+# 
+# #create this for using wordcloud with tableau
+# SEN <- as.data.frame(tdm1) 
+# write.csv(SEN, file = 'sentiment_corpus_neg.csv')
+
+#generate negative word cloud alternate
+corpus = Corpus(VectorSource(senti.docs))
+corpus <- tm_map(corpus, function(x)removeWords(x,stopwords()))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 15))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.3, 'Lyft Tweets - Negative Word Cloud')
+wordcloud(corpus,colors=brewer.pal(5, "Dark2"),random.color = TRUE,max.words = 200)
+
+```
+
+## all word cloud
+
+```{r}
+# For all words
+corpus = Corpus(VectorSource(cleaned_tweets$text))
+corpus <- tm_map(corpus, function(x)removeWords(x,stopwords()))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 15))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.3, 'Lyft Tweets - Word Cloud')
+wordcloud(corpus,colors=brewer.pal(5, "Dark2"),random.color = TRUE,max.words = 200)
+
+```

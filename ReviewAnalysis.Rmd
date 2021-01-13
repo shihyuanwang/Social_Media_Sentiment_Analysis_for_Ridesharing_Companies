@@ -1,0 +1,323 @@
+---
+title: "Final Project - Uber vs. Lyft - Itunes Store Review Analysis"
+author: "Shih-Yuan Wang"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message = FALSE, warning = FALSE}
+# Load libraries 
+
+# # Download package from CRAN archive
+# 
+# url <- "https://cran.r-project.org/src/contrib/Archive/itunesr/itunesr_0.1.1.tar.gz"
+# pkgFile <- "itunesr_0.1.1.tar.gz"
+# download.file(url = url, destfile = pkgFile)
+# 
+# # Install dependencies
+# install.packages(c("jsonlite", "xml2", "lubridate" , "curl"))
+# 
+# # Install package
+# install.packages(pkgs=pkgFile, type="source", repos=NULL)
+# 
+# # Delete package tarball
+# unlink(pkgFile)
+# 
+# # install itunesr directly from CRAN:
+# install.packages("itunesr", type = "source")
+
+library(itunesr)
+library(syuzhet)  # for sentiment analysis 
+library(knitr)
+library(plotly)
+library(wordcloud)
+library(tm) 
+library(base64enc) 
+
+rm(list=ls())
+setwd("C:/Users/User/Desktop/BUS 760 - Data Technology for BA/Project")
+```
+
+# Get the recent reviews for the specific page
+
+```{r}
+# Copy from "itunesr" package source code and do some modifications
+# https://github.com/amrrs/itunesr
+
+getReviews <- function(app_id,country,page_num){
+  
+  #building_url
+  
+  json_url <- paste0('https://itunes.apple.com/',
+                     country,
+                     '/rss/customerreviews/page=',
+                     page_num,     # per page: 50 reviews
+                     '/id=',
+                     app_id,
+                     '/sortby=mostrecent/',
+                     'json')
+  
+  xml_url <- paste0('https://itunes.apple.com/',
+                    country,
+                    '/rss/customerreviews/page=',
+                    page_num,
+                    '/id=',
+                    app_id,
+                    '/sortby=mostrecent/',
+                    'xml')
+  
+  
+  js <- jsonlite::fromJSON(json_url)
+  js
+  
+  reviews <- cbind(Title = js$feed$entry$title$label,
+                   Author_URL = js$feed$entry$author$uri,
+                   Author_Name = js$feed$entry$author$name,
+                   App_Version = js$feed$entry$'im:version'$label,
+                   Rating = js$feed$entry$'im:rating'$label,
+                   Review = js$feed$entry$content$label)
+  
+  head(reviews)
+  dim(reviews)
+  
+  names(reviews) <- c('Title','Author_URL','Author_Name','App_Version','Rating','Review')
+  
+  #reading xml for date
+  
+  xml_n <- xml2::read_xml(xml_url)
+  
+  entries <- xml2::xml_children(xml_n)[xml2::xml_name(xml2::xml_children(xml_n))=='entry']
+  
+  
+  #extracting date from entries
+  
+  date <- xml2::xml_text(
+    xml2::xml_children(entries))[xml2::xml_name(xml2::xml_children(entries))=='updated']
+  
+  # POSIXct conversion to make it work with dplyr
+  
+  reviews$Date <- as.POSIXct(
+                  lubridate::with_tz(
+                  strptime(date,format='%Y-%m-%dT%H:%M:%S',tz='America/Los_Angeles'),
+                          tzone='Europe/London'))
+  
+  # Formatting
+  
+  reviews$Title <- as.character(reviews$Title)
+  reviews$Review <- as.character(reviews$Review)
+  rownames(reviews) <- NULL
+  
+  return (reviews)
+  
+}
+```
+
+# Uber Reviews (2020/11/29-12/8)
+
+```{r}
+UberReview <- getReviews(368677368,'US',1)  # the most recent 50 reviews
+UberReview
+```
+
+```{r}
+# Clean reviews
+
+cleanReviews <- function(reviews){
+  
+  # remove punctuation
+  reviews = gsub("[[:punct:]]", "", reviews)
+  # remove numbers
+  reviews = gsub("[[:digit:]]", "", reviews)
+  # remove html links
+  reviews = gsub("https*?[:space:]", "", reviews)
+  # remove unnecessary spaces
+  reviews = gsub("[ \t]{2,}", "", reviews)
+  # remove something
+  reviews= gsub("^\\s+|\\s+$", "", reviews)
+  # remove emojis or special characters
+  reviews = gsub("<.*>", "", enc2native(reviews))
+  reviews = gsub("[^\x01-\x7F]", "", reviews)
+  
+  reviews = tolower(reviews)
+  return(reviews)
+}
+
+UberReview$Review = cleanReviews(UberReview$Review)
+
+# Run sentiment analysis and save it to the csv file
+
+emotions = get_nrc_sentiment(UberReview$Review)
+sentiment = get_sentiment(UberReview$Review)
+
+UberReview <- cbind(UberReview, emotions)
+UberReview$sentiment = sentiment
+UberReview
+
+write.csv(UberReview,'UberReview.csv', row.names = FALSE)
+```
+
+```{r}
+### For future rerun
+
+# Read in the UberReview.csv
+
+UberReview <- read.csv("UberReview.csv")
+dim(UberReview)
+```
+
+```{r}
+# Plot emotion histogram with the latest reviews
+
+emo_bar = colSums(UberReview[,8:15])
+emo_sum = data.frame(count=emo_bar, emotion=names(emo_bar))
+emo_sum$emotion = factor(emo_sum$emotion, levels=emo_sum$emotion[order(emo_sum$count, decreasing = TRUE)])
+
+plot_ly(emo_sum, x=~emotion, y=~count, type="bar", texttemplate = '%{y:.2s}', 
+        textposition = 'outside', color=~emotion) %>%
+        layout(xaxis=list(title=""), showlegend=FALSE,
+         title="Uber Review - Distribution of Emotion Categories")
+```
+
+## emotion word cloud
+
+```{r message = FALSE, warning = FALSE}
+# emotion analysis: anger, anticipation, disgust, fear, joy, sadness, surprise, trust
+
+# put everything in a single vector
+emotionwords = c(
+  paste(UberReview$Review[UberReview$anger > 0], collapse=" "),
+  paste(UberReview$Review[UberReview$anticipation > 0], collapse=" "),
+  paste(UberReview$Review[UberReview$disgust > 0], collapse=" "),
+  paste(UberReview$Review[UberReview$fear > 0], collapse=" "),
+  paste(UberReview$Review[UberReview$joy > 0], collapse=" "),
+  paste(UberReview$Review[UberReview$sadness > 0], collapse=" "),
+  paste(UberReview$Review[UberReview$surprise > 0], collapse=" "),
+  paste(UberReview$Review[UberReview$trust > 0], collapse=" ")
+)
+
+# remove stop-words
+emotionwords = removeNumbers(emotionwords)
+emotionwords = removeWords(emotionwords, stopwords("english"))
+
+# create corpus
+corpus = Corpus(VectorSource(emotionwords))
+
+# create term-document matrix
+tdm = TermDocumentMatrix(corpus)
+
+# convert as matrix
+tdm = as.matrix(tdm)
+
+# add column names
+colnames(tdm) = c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust')
+
+# Plot emotion word cloud
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 15))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Uber Review - Emotion Comparison Word Cloud", cex=1.2)
+comparison.cloud(tdm, random.order=FALSE,
+                 colors = c("#00B2FF", "red", "#FF0099", "#6600CC", "green", "orange", "blue", "brown"),
+                 title.size=1.5, max.words=2000)
+```
+
+# Lyft Reviews (2020/11/29-12/8)
+
+```{r}
+LyftReview1 <- getReviews(529379082,'US',1)  # the most recent 50 reviews
+LyftReview2 <- getReviews(529379082,'US',2)  
+LyftReview3 <- getReviews(529379082,'US',3)  
+LyftReview4 <- getReviews(529379082,'US',4)  
+
+LyftReview <- rbind(LyftReview1, LyftReview2, LyftReview3, LyftReview4[1:30,])
+LyftReview <- as.data.frame(LyftReview)
+LyftReview
+```
+
+```{r}
+# Clean reviews
+LyftReview$Review = cleanReviews(LyftReview$Review)
+
+# Run sentiment analysis and save it to the csv file
+
+emotions = get_nrc_sentiment(LyftReview$Review)
+sentiment = get_sentiment(LyftReview$Review)
+
+LyftReview <- cbind(LyftReview, emotions)
+LyftReview$sentiment = sentiment
+LyftReview
+
+write.csv(LyftReview,'LyftReview.csv', row.names = FALSE)
+```
+
+```{r}
+### For future rerun
+
+# Read in the LyftReview.csv
+
+LyftReview <- read.csv("LyftReview.csv")
+dim(LyftReview)
+```
+
+```{r}
+# Plot emotion histogram with the latest reviews
+
+emo_bar = colSums(LyftReview[,8:15])
+emo_sum = data.frame(count=emo_bar, emotion=names(emo_bar))
+emo_sum$emotion = factor(emo_sum$emotion, levels=emo_sum$emotion[order(emo_sum$count, decreasing = TRUE)])
+
+plot_ly(emo_sum, x=~emotion, y=~count, type="bar", texttemplate = '%{y:.2s}', 
+        textposition = 'outside', color=~emotion) %>%
+        layout(xaxis=list(title=""), showlegend=FALSE,
+         title="Lyft Review - Distribution of Emotion Categories")
+```
+
+## emotion word cloud
+
+```{r message = FALSE, warning = FALSE}
+# emotion analysis: anger, anticipation, disgust, fear, joy, sadness, surprise, trust
+
+# put everything in a single vector
+emotionwords = c(
+  paste(LyftReview$Review[LyftReview$anger > 0], collapse=" "),
+  paste(LyftReview$Review[LyftReview$anticipation > 0], collapse=" "),
+  paste(LyftReview$Review[LyftReview$disgust > 0], collapse=" "),
+  paste(LyftReview$Review[LyftReview$fear > 0], collapse=" "),
+  paste(LyftReview$Review[LyftReview$joy > 0], collapse=" "),
+  paste(LyftReview$Review[LyftReview$sadness > 0], collapse=" "),
+  paste(LyftReview$Review[LyftReview$surprise > 0], collapse=" "),
+  paste(LyftReview$Review[LyftReview$trust > 0], collapse=" ")
+)
+
+# remove stop-words
+emotionwords = removeNumbers(emotionwords)
+emotionwords = removeWords(emotionwords, stopwords("english"))
+
+# create corpus
+corpus = Corpus(VectorSource(emotionwords))
+
+# create term-document matrix
+tdm = TermDocumentMatrix(corpus)
+
+# convert as matrix
+tdm = as.matrix(tdm)
+
+# add column names
+colnames(tdm) = c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust')
+
+# Plot emotion word cloud
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 15))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Lyft Review - Emotion Comparison Word Cloud", cex=1.2)
+comparison.cloud(tdm, random.order=FALSE,
+                 colors = c("#00B2FF", "red", "#FF0099", "#6600CC", "green", "orange", "blue", "brown"),
+                 title.size=1.5, max.words=2000)
+```
