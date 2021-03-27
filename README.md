@@ -9,3 +9,5 @@ The project is aimed to answer the following questions:
 
 
 In the project, tweets containing the names of the companies - “Uber” and “Lyft” - and Apple App Store “Uber” and “Lyft” app ratings and reviews were used to evaluate the potential financial impact (stock price) and provide suggestions for improvements.  
+
+https://github.com/shihyuanwang/Social_Media_Sentiment_Analysis_for_Ridesharing_Companies/blob/main/Social%20Media%20Sentiment%20Analysis%20for%20Ridesharing%20Companies_Shih-Yuan%20Wang.pdf
